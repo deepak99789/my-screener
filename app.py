@@ -36,10 +36,12 @@ scan_button = st.button("🚀 RUN SCAN", use_container_width=True)
 # --- STRATEGY ENGINE ---
 def calculate_zones(df, scan_period_days):
     zones = []
+    # Data Cleaning: Fix Multi-index and Timezone
     if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
+    if df.index.tz is not None: df.index = df.index.tz_localize(None)
     
     # Time Filtering
-    cutoff_date = datetime.now() - timedelta(days=scan_period_days)
+    cutoff_date = pd.to_datetime(datetime.now() - timedelta(days=scan_period_days))
     df = df[df.index >= cutoff_date]
     df = df.reset_index(drop=True)
     
@@ -49,8 +51,8 @@ def calculate_zones(df, scan_period_days):
             lr, lb = float(legin['High'] - legin['Low']), float(abs(legin['Close'] - legin['Open']))
             bb = float(abs(base['Close'] - base['Open']))
             
-            # Logic conditions: Base body must be small relative to Legin
-            if (lb/lr >= 0.65) and (bb <= lb/2):
+            # Logic: Legin body must be > 65% of range, Base body must be <= 50% of Legin body
+            if lr > 0 and (lb/lr >= 0.65) and (bb <= lb/2):
                 pattern = "Demand" if legin['Close'] < legin['Open'] else "Supply"
                 zones.append({"Pattern": pattern, "Price": legout['Close'], "Status": "Fresh"})
         except: continue
@@ -62,7 +64,6 @@ if scan_button:
     with st.spinner("Scanning markets..."):
         for symbol in selected_symbols:
             for tf in time_intervals:
-                # Fetching data for scan_period + buffer
                 df = yf.download(symbol, period=f"{scan_period + 5}d", interval=tf, progress=False)
                 if not df.empty:
                     res = calculate_zones(df, scan_period)
@@ -76,4 +77,4 @@ if scan_button:
     if results_list:
         st.dataframe(pd.concat(results_list), use_container_width=True)
     else:
-        st.warning("No zones found. Try adjusting parameters.")
+        st.warning("No zones found with current filters.")
