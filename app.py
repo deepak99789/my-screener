@@ -26,7 +26,7 @@ with col5: scan_period = st.number_input("Scan Period (Days)", 1, 365, 30)
 
 col6, col7, col8 = st.columns(3)
 with col6: time_intervals = st.multiselect("Timeframe", ["5m", "15m", "1h", "4h", "1d"], default=["15m"])
-with col7: zone_status = st.multiselect("Zone Status", ["Fresh", "Tested", "All"], default=["Fresh"])
+with col7: zone_status = st.multiselect("Zone Status", ["Fresh", "Tested", "Hit Target", "Hit SL", "All"], default=["Fresh", "Tested"])
 with col8: zone_type = st.radio("Zone Type", ["Supply", "Demand", "All"], horizontal=True)
 
 selected_symbols = st.multiselect("Select Symbols", TICKER_MAP[script_type], default=TICKER_MAP[script_type])
@@ -53,12 +53,10 @@ def calculate_zones(df, base_list, legout_list, validations):
     zones = []
     target_b, target_l = max(base_list), max(legout_list)
     
-    # Loop adjustment to prevent IndexError
     for i in range(target_b, len(df) - target_l):
         legin = df.iloc[i - target_b]
         bases = df.iloc[i - target_b + 1 : i]
         legouts = df.iloc[i : i + target_l]
-        
         if len(bases) == 0: continue
         
         # Validations
@@ -69,8 +67,7 @@ def calculate_zones(df, base_list, legout_list, validations):
             f_l, l_b = legouts.iloc[0], bases.iloc[-1]
             if not (get_val(f_l, 'High') < get_val(l_b, 'Close') or get_val(f_l, 'Low') > get_val(l_b, 'Open')): continue
         
-        high, low = get_val(legin, 'High'), get_val(legin, 'Low')
-        close, open_p = get_val(legin, 'Close'), get_val(legin, 'Open')
+        high, low, close, open_p = get_val(legin, 'High'), get_val(legin, 'Low'), get_val(legin, 'Close'), get_val(legin, 'Open')
         lr, lb = high - low, abs(close - open_p)
         
         if lr > 0 and (lb / lr >= 0.65):
@@ -79,16 +76,29 @@ def calculate_zones(df, base_list, legout_list, validations):
             
             prox, dist = get_proximal_distal(bases.iloc[-1], zone_type)
             zone_price = get_val(legouts.iloc[0], 'Close')
-            after_zone = df.iloc[i + target_l : ]
-            is_tested = any((row['Low'] <= zone_price <= row['High']) for _, row in after_zone.iterrows())
+            risk = abs(prox - dist)
+            target = (prox + (3 * risk)) if zone_type == "Demand" else (prox - (3 * risk))
             
+            after_zone = df.iloc[i + target_l : ]
+            status = "Fresh"
+            for _, row in after_zone.iterrows():
+                if (zone_type == "Demand" and row['Low'] <= dist) or (zone_type == "Supply" and row['High'] >= dist):
+                    status = "Hit SL"; break
+                if (zone_type == "Demand" and row['High'] >= target) or (zone_type == "Supply" and row['Low'] <= target):
+                    status = "Hit Target"; break
+                if (zone_type == "Demand" and row['Low'] <= prox) or (zone_type == "Supply" and row['High'] >= prox):
+                    status = "Tested"
+
             zones.append({
                 "Date": legin['Date'],
                 "Pattern": f"{pattern_dir}B{'R' if get_val(legouts.iloc[0], 'Close') > get_val(legouts.iloc[0], 'Open') else 'D'}",
                 "Type": zone_type,
                 "Proximal": round(float(prox), 2),
                 "Distal": round(float(dist), 2),
-                "Status": "Tested" if is_tested else "Fresh",
+                "Target": round(float(target), 2),
+                "Status": status,
+                "Base Count": target_b,
+                "Legout Count": target_l,
                 "Price": zone_price
             })
     return pd.DataFrame(zones)
@@ -112,6 +122,7 @@ if scan_button:
     if results_list:
         final_df = pd.concat(results_list)
         st.dataframe(final_df, use_container_width=True)
-        st.download_button("📥 Download CSV", final_df.to_csv(index=False).encode('utf-8'), "scan_results.csv", "text/csv")
+        csv = final_df.to_csv(index=False).encode('utf-8')
+        st.download_button("📥 Download CSV", csv, "scan_results.csv", "text/csv")
     else:
-        st.warning("No zones found with current filters.")
+        st.warning("No zones found.")
