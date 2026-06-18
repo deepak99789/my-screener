@@ -51,20 +51,26 @@ def calculate_zones(df, base_list, legout_list, validations):
         # Validation Logic
         if "Candle behind Legin" in validations:
             prev = df.iloc[i - max_b - 1]
-            if legin['High'] <= prev['High'] and legin['Low'] >= prev['Low']: continue
+            if float(legin['High']) <= float(prev['High']) and float(legin['Low']) >= float(prev['Low']): continue
         
         if "White Area" in validations:
             first_l = legouts.iloc[0]
             last_b = bases.iloc[-1]
-            if not (first_l['High'] < last_b['Close'] or first_l['Low'] > last_b['Open']): continue
+            if not (float(first_l['High']) < float(last_b['Close']) or float(first_l['Low']) > float(last_b['Open'])): continue
         
-        # Pattern Detection
-        lr = float(legin['High'] - legin['Low'])
-        lb = float(abs(legin['Close'] - legin['Open']))
+        # Pattern Detection with Safe Float Conversion
+        high = float(legin['High'])
+        low = float(legin['Low'])
+        close = float(legin['Close'])
+        open_p = float(legin['Open'])
+        
+        lr = high - low
+        lb = abs(close - open_p)
         
         if lr > 0 and (lb / lr >= 0.65):
-            pattern_dir = 'R' if legin['Close'] > legin['Open'] else 'D'
-            legout_dir = 'R' if legouts.iloc[0]['Close'] > legouts.iloc[0]['Open'] else 'D'
+            legout_first = legouts.iloc[0]
+            pattern_dir = 'R' if close > open_p else 'D'
+            legout_dir = 'R' if float(legout_first['Close']) > float(legout_first['Open']) else 'D'
             p_name = f"{pattern_dir}B{legout_dir}"
             
             zones.append({
@@ -72,16 +78,16 @@ def calculate_zones(df, base_list, legout_list, validations):
                 "Pattern": p_name,
                 "Type": "Supply" if pattern_dir == 'R' else "Demand",
                 "Status": "Fresh",
-                "Base": len(bases),
-                "Legout": len(legouts),
-                "Price": legouts.iloc[0]['Close']
+                "Base Count": len(bases),
+                "Legout Count": len(legouts),
+                "Price": float(legout_first['Close'])
             })
     return pd.DataFrame(zones)
 
 # --- EXECUTION ---
 if scan_button:
     results_list = []
-    with st.spinner("Scanning markets..."):
+    with st.spinner("Scanning..."):
         for symbol in selected_symbols:
             for tf in time_intervals:
                 df = yf.download(symbol, period=f"{scan_period + 5}d", interval=tf, progress=False)
