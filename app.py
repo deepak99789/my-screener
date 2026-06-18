@@ -1,66 +1,54 @@
 import streamlit as st
-import yfinance as yf
 import pandas as pd
 
-# UI Config
-st.set_page_config(page_title="Supply Demand Screener", layout="wide")
-st.title("📊 Supply & Demand Strategy Screener")
+st.set_page_config(page_title="Pro Supply Demand Screener", layout="wide")
 
-# Sidebar - User Inputs
+st.title("🎯 Pro Supply & Demand Screener")
+
+# --- SIDEBAR: Control Panel ---
 with st.sidebar:
-    st.header("⚙️ Configuration")
-    symbol = st.text_input("Enter Symbol (e.g. RELIANCE.NS, BTC-USD)", "RELIANCE.NS")
-    timeframe = st.selectbox("Timeframe", ["5m", "15m", "30m", "45m", "1h", "2h", "4h", "1d", "1wk"])
+    st.header("⚙️ Scan Settings")
     
-    st.divider()
-    st.subheader("Strategy Settings")
-    base_candles = st.number_input("Base Candles (Count)", 1, 5, 2)
-    legout_min_perc = st.slider("Legout Body Requirement (%)", 50, 100, 70)
+    # 1. Script Type
+    script_type = st.selectbox("Select Script Type", 
+                               ["Nifty 100", "Nifty 50", "FNO", "Nifty 200", "Forex", "Commodity", "US Stock 100", "US 30", "Indices"])
     
-    run_btn = st.button("🚀 Run Analysis")
+    # 2. Base Candle Selection
+    base_select = st.selectbox("Select Base Candles", ["1", "2", "3", "All"])
+    
+    # 3. Distance %
+    dist_perc = st.slider("Price to Zone Entry Distance (%)", 0, 10, 2)
+    
+    # 4. Time Interval (Multi-select)
+    time_intervals = st.multiselect("Select Timeframe", 
+                                    ["5m", "15m", "30m", "45m", "75m", "125m", "1h", "2h", "4h", "5h", "6h", "8h", "10h", "16h", "Daily", "Weekly"],
+                                    default=["15m", "1h"])
+    
+    # 5, 6, 7. Zone Status, Type & Validation
+    zone_status = st.multiselect("Zone Status", ["Fresh", "Target", "SL", "All"], default=["Fresh"])
+    zone_type = st.radio("Zone Type", ["Supply", "Demand", "All"], horizontal=True)
+    val_type = st.multiselect("Validation Type", ["Candle behind Legin", "White Area"])
+    
+    # 8. Scan Period
+    scan_period = st.number_input("Scan Period (Days)", min_value=1, max_value=365, value=30)
+    
+    # 9. Scan Button
+    scan_button = st.button("🚀 RUN SCAN", use_container_width=True)
 
-# Strategy Logic
-def calculate_zones(df, legout_min_perc):
-    zones = []
-    # Loop through candles to find 3-candle patterns
-    for i in range(1, len(df) - 1):
-        legin, base, legout = df.iloc[i-1], df.iloc[i], df.iloc[i+1]
-        
-        # Calculate Range and Body
-        def get_metrics(candle):
-            r = candle['High'] - candle['Low']
-            b = abs(candle['Close'] - candle['Open'])
-            return r, b
-
-        lr, lb = get_metrics(legin)
-        br, bb = get_metrics(base)
-        or_r, or_b = get_metrics(legout)
-
-        # Conditions
-        cond1 = (lb / lr) >= 0.65 if lr > 0 else False
-        cond2 = (bb <= (lb / 2)) and (br <= (lr / 2))
-        cond3 = (or_b / or_r >= (legout_min_perc/100)) and (or_b > lb)
-
-        if cond1 and cond2 and cond3:
-            # Pattern classification
-            if legin['Close'] > legin['Open'] and legout['Close'] > legout['Open']: pattern = "RBR (Demand)"
-            elif legin['Close'] > legin['Open'] and legout['Close'] < legout['Open']: pattern = "RBD (Supply)"
-            elif legin['Close'] < legin['Open'] and legout['Close'] < legout['Open']: pattern = "DBD (Supply)"
-            else: pattern = "DBR (Demand)"
-            
-            zones.append({"Time": legin.name, "Pattern": pattern, "Price": legout['Close']})
-    return pd.DataFrame(zones)
-
-# Execution
-if run_btn:
-    with st.spinner("Analyzing data..."):
-        data = yf.download(symbol, period="1mo", interval=timeframe)
-        if not data.empty:
-            results = calculate_zones(data, legout_min_perc)
-            if not results.empty:
-                st.success(f"Zones Found: {len(results)}")
-                st.table(results)
-            else:
-                st.warning("No zones found matching your criteria.")
-        else:
-            st.error("Invalid symbol or no data available.")
+# --- MAIN AREA ---
+if scan_button:
+    st.info(f"Scanning {script_type} for {zone_type} zones...")
+    
+    # Mock data output
+    data = {
+        "Symbol": ["RELIANCE", "TCS", "BTCUSD"],
+        "Timeframe": ["15m", "1h", "4h"],
+        "Zone": ["Demand", "Supply", "Demand"],
+        "Status": ["Fresh", "Fresh", "Fresh"],
+        "Distance (%)": ["1.2%", "0.5%", "2.1%"]
+    }
+    df = pd.DataFrame(data)
+    
+    st.dataframe(df, use_container_width=True)
+else:
+    st.write("### Please configure filters in sidebar and click 'Run Scan'.")
