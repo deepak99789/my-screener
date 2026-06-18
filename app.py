@@ -22,42 +22,36 @@ with col3: scan_period = st.number_input("Scan Period (Days)", 1, 365, 30)
 
 selected_symbols = st.multiselect("Select Symbols", TICKER_MAP[script_type], default=TICKER_MAP[script_type])
 
+# Row for Advanced Filters
 col4, col5 = st.columns(2)
 with col4: time_intervals = st.multiselect("Timeframes", ["5m", "15m", "1h", "4h", "1d"], default=["15m"])
-with col5: val_type = st.multiselect("Validation Type", ["Candle behind Legin", "White Area"])
+with col5: zone_status = st.multiselect("Zone Status", ["Fresh", "Tested", "All"], default=["Fresh"])
+
+# Row for Strategy
+col6, col7 = st.columns(2)
+with col6: zone_type = st.radio("Zone Type", ["Supply", "Demand", "All"], horizontal=True)
+with col7: dist_perc = st.slider("Distance to Entry (%)", 0.0, 10.0, 2.0, step=0.1)
 
 scan_button = st.button("🚀 RUN SCAN", use_container_width=True)
 
 # --- STRATEGY ENGINE ---
-def calculate_zones(df, legout_min_perc=70):
+def calculate_zones(df):
     zones = []
-    # Data Cleaning: Multi-index issue fix
-    if isinstance(df.columns, pd.MultiIndex):
-        df.columns = df.columns.get_level_values(0)
-    
-    # Reset index to access by integer position
+    if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
     df = df.reset_index(drop=True)
     
     for i in range(1, len(df) - 1):
-        legin = df.iloc[i-1]
-        base = df.iloc[i]
-        legout = df.iloc[i+1]
-        
-        # Safe extraction
+        legin, base, legout = df.iloc[i-1], df.iloc[i], df.iloc[i+1]
         try:
             lr, lb = float(legin['High'] - legin['Low']), float(abs(legin['Close'] - legin['Open']))
-            br, bb = float(base['High'] - base['Low']), float(abs(base['Close'] - base['Open']))
-            or_r, or_b = float(legout['High'] - legout['Low']), float(abs(legout['Close'] - legout['Open']))
+            bb = float(abs(base['Close'] - base['Open']))
+            or_b = float(abs(legout['Close'] - legout['Open']))
             
-            cond1 = (lb / lr) >= 0.65 if lr > 0 else False
-            cond2 = (bb <= (lb / 2)) and (br <= (lr / 2))
-            cond3 = (or_b / or_r >= (legout_min_perc/100)) if or_r > 0 else False
-
-            if cond1 and cond2 and cond3:
+            # Logic conditions
+            if (lb/lr >= 0.65) and (bb <= lb/2):
                 pattern = "Demand" if legin['Close'] < legin['Open'] else "Supply"
-                zones.append({"Pattern": pattern, "Price": legout['Close']})
+                zones.append({"Pattern": pattern, "Price": legout['Close'], "Status": "Fresh"})
         except: continue
-            
     return pd.DataFrame(zones)
 
 # --- EXECUTION ---
@@ -70,11 +64,14 @@ if scan_button:
                 if not df.empty:
                     res = calculate_zones(df)
                     if not res.empty:
-                        res['Symbol'] = symbol
-                        res['TF'] = tf
+                        # Filtering Logic
+                        if "All" not in zone_status: res = res[res['Status'].isin(zone_status)]
+                        if zone_type != "All": res = res[res['Pattern'] == zone_type]
+                        
+                        res['Symbol'], res['TF'] = symbol, tf
                         results_list.append(res)
     
     if results_list:
         st.dataframe(pd.concat(results_list), use_container_width=True)
     else:
-        st.warning("No zones found. Try changing parameters.")
+        st.warning("No zones found with current filters.")
