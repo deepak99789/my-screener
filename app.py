@@ -39,24 +39,26 @@ def calculate_zones(df, scan_period_days, base_limit):
     if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
     if df.index.tz is not None: df.index = df.index.tz_localize(None)
     
-    # Date Filtering
     cutoff_date = pd.to_datetime(datetime.now() - timedelta(days=scan_period_days))
     df = df[df.index >= cutoff_date].reset_index()
-    # Ensure Date column name exists
     if 'Date' not in df.columns: df.rename(columns={df.columns[0]: 'Date'}, inplace=True)
     
     for i in range(base_limit, len(df) - 1):
         legin = df.iloc[i - base_limit]
         legout = df.iloc[i + 1]
         
+        # Pattern Logic: R = Rally, D = Drop
+        legin_dir = "R" if legin['Close'] > legin['Open'] else "D"
+        legout_dir = "R" if legout['Close'] > legout['Open'] else "D"
+        pattern_name = f"{legin_dir}B{legout_dir}"
+        
         lr, lb = float(legin['High'] - legin['Low']), float(abs(legin['Close'] - legin['Open']))
         
         if lr > 0 and (lb / lr >= 0.65):
-            pattern = "Demand" if legin['Close'] < legin['Open'] else "Supply"
             zones.append({
                 "Date of Zone Formed": legin['Date'],
-                "Pattern": pattern,
-                "Type": "Standard",
+                "Pattern": pattern_name,
+                "Type": "Supply" if legin_dir == "R" else "Demand",
                 "Status": "Fresh",
                 "Base Count": base_limit,
                 "Legout Count": 1,
@@ -81,7 +83,7 @@ if scan_button:
     if results_list:
         final_df = pd.concat(results_list)
         if "All" not in zone_status: final_df = final_df[final_df['Status'].isin(zone_status)]
-        if zone_type != "All": final_df = final_df[final_df['Pattern'] == zone_type]
+        if zone_type != "All": final_df = final_df[final_df['Type'] == zone_type]
         
         cols = ["Symbol", "Type", "Pattern", "Status", "Timeframe", "Base Count", "Legout Count", "Date of Zone Formed", "Price"]
         st.dataframe(final_df[cols], use_container_width=True)
@@ -89,4 +91,4 @@ if scan_button:
         csv = final_df[cols].to_csv(index=False).encode('utf-8')
         st.download_button("📥 Download CSV", csv, "scan_results.csv", "text/csv")
     else:
-        st.warning("No zones found. Try adjusting parameters.")
+        st.warning("No zones found with current filters.")
