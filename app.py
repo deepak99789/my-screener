@@ -21,18 +21,13 @@ with col2: base_choice = st.multiselect("Base Candles", [1, 2, 3], default=[1])
 with col3: legout_choice = st.multiselect("Legout Candles", [1, 2, 3], default=[1])
 
 col4, col5 = st.columns(2)
-with col4: validation_check = st.multiselect("Validation Filters", ["Candle behind Legin", "White Area"])
-with col5: scan_period = st.number_input("Scan Period (Days)", 1, 730, 360)
-
-col6, col7, col8 = st.columns(3)
-with col6: time_intervals = st.multiselect("Timeframe", ["15m", "1h", "4h", "1d"], default=["1h"])
-with col7: zone_status = st.multiselect("Zone Status", ["Fresh", "Tested", "Hit Target", "Hit SL", "All"], default=["Fresh", "Tested"])
-with col8: zone_type = st.radio("Zone Type", ["Supply", "Demand", "All"], horizontal=True)
+with col4: scan_period = st.number_input("Scan Period (Days)", 1, 730, 360)
+with col5: time_intervals = st.multiselect("Timeframe", ["15m", "1h", "4h", "1d"], default=["1h"])
 
 selected_symbols = st.multiselect("Select Symbols", TICKER_MAP[script_type], default=TICKER_MAP[script_type])
 scan_button = st.button("🚀 RUN SCAN", use_container_width=True)
 
-# --- ENGINE ---
+# --- CORE ENGINE ---
 def get_clean_data(symbol, period, interval):
     df = yf.download(symbol, period=period, interval=interval, progress=False)
     if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
@@ -43,38 +38,31 @@ def get_clean_data(symbol, period, interval):
 
 def scan_zones(df, target_b, target_l):
     zones = []
-    # Loop to capture pattern: Legin + Base + Legout
     for i in range(target_b + 1, len(df) - target_l):
         base = df.iloc[i-1]
         legout = df.iloc[i]
         
-        base_body = abs(base['Close'] - base['Open'])
-        base_range = base['High'] - base['Low']
-        lo_body = abs(legout['Close'] - legout['Open'])
-        lo_range = legout['High'] - legout['Low']
+        base_body, base_range = abs(base['Close'] - base['Open']), (base['High'] - base['Low'])
+        lo_body, lo_range = abs(legout['Close'] - legout['Open']), (legout['High'] - legout['Low'])
         
-        # Valid Pattern Check (Base weak, Legout strong)
         if base_range > 0 and (base_body / base_range < 0.4) and (lo_body / lo_range > 0.6):
             zt = "Demand" if legout['Close'] > legout['Open'] else "Supply"
-            prox = base['Close'] if zt == "Demand" else base['Open']
-            dist = base['Low'] if zt == "Demand" else base['High']
+            prox, dist = (base['Close'] if zt == "Demand" else base['Open']), (base['Low'] if zt == "Demand" else base['High'])
             risk = abs(prox - dist)
             target = (prox + (3 * risk)) if zt == "Demand" else (prox - (3 * risk))
             
+            # Simple Status Logic
+            curr_price = df.iloc[-1]['Close']
+            status = "Hit Target" if (zt=="Demand" and curr_price>=target) or (zt=="Supply" and curr_price<=target) else \
+                     "Hit SL" if (zt=="Demand" and curr_price<=dist) or (zt=="Supply" and curr_price>=dist) else "Fresh"
+            
             zones.append({
-                "Date": base['Date'],
-                "Type": zt,
-                "Proximal": round(prox, 2),
-                "Distal": round(dist, 2),
-                "Target": round(target, 2),
-                "Status": "Fresh",
-                "Base Count": target_b,
-                "Legout Count": target_l,
-                "Price": round(legout['Close'], 2)
+                "Date": base['Date'], "Type": zt, "Proximal": round(prox, 2), "Distal": round(dist, 2),
+                "Target": round(target, 2), "Status": status, "Base": target_b, "Legout": target_l, "Price": round(legout['Close'], 2)
             })
     return pd.DataFrame(zones)
 
-# --- EXECUTION ---
+# --- EXECUTION & SUMMARY ---
 if scan_button:
     results = []
     for sym in selected_symbols:
@@ -83,14 +71,16 @@ if scan_button:
             if not df.empty:
                 res = scan_zones(df, max(base_choice), max(legout_choice))
                 if not res.empty:
-                    res['Symbol'] = sym
-                    res['Timeframe'] = tf
+                    res['Symbol'], res['Timeframe'] = sym, tf
                     results.append(res)
     
     if results:
         final_df = pd.concat(results)
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Total Zones", len(final_df))
+        c2.metric("Target Hit", len(final_df[final_df['Status'] == 'Hit Target']))
+        c3.metric("SL Hit", len(final_df[final_df['Status'] == 'Hit SL']))
         st.dataframe(final_df, use_container_width=True)
-        csv = final_df.to_csv(index=False).encode('utf-8')
-        st.download_button("📥 Download CSV", csv, "scan_results.csv", "text/csv")
+        st.download_button("📥 Download CSV", final_df.to_csv(index=False).encode('utf-8'), "scan_results.csv")
     else:
-        st.warning("No zones found with these settings.")
+        st.warning("No zones found.")
