@@ -1,7 +1,6 @@
 import streamlit as st
 import yfinance as yf
 import pandas as pd
-from datetime import datetime, timedelta
 
 # --- CONFIGURATION ---
 st.set_page_config(page_title="Pro Supply Demand Screener", layout="wide")
@@ -35,7 +34,6 @@ scan_button = st.button("🚀 RUN SCAN", use_container_width=True)
 
 # --- STRATEGY ENGINE ---
 def calculate_zones(df, base_list, legout_list, validations):
-    # Flatten MultiIndex if yfinance returns it
     if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
     df = df.reset_index()
     if 'index' in df.columns: df.rename(columns={'index': 'Date'}, inplace=True)
@@ -46,17 +44,17 @@ def calculate_zones(df, base_list, legout_list, validations):
         return float(val.iloc[0]) if isinstance(val, pd.Series) else float(val)
 
     zones = []
-    max_b = max(base_list) if base_list else 1
-    max_l = max(legout_list) if legout_list else 1
+    target_b = max(base_list)
+    target_l = max(legout_list)
     
-    for i in range(max_b, len(df) - max_l - 1):
-        legin = df.iloc[i - max_b]
-        bases = df.iloc[i - max_b + 1 : i]
-        legouts = df.iloc[i : i + max_l]
+    for i in range(target_b, len(df) - target_l - 1):
+        legin = df.iloc[i - target_b]
+        bases = df.iloc[i - target_b + 1 : i]
+        legouts = df.iloc[i : i + target_l]
         
-        # Validation Logic
+        # Validations
         if "Candle behind Legin" in validations:
-            prev = df.iloc[i - max_b - 1]
+            prev = df.iloc[i - target_b - 1]
             if get_val(legin, 'High') <= get_val(prev, 'High') and get_val(legin, 'Low') >= get_val(prev, 'Low'): continue
         
         if "White Area" in validations:
@@ -65,34 +63,32 @@ def calculate_zones(df, base_list, legout_list, validations):
             if not (get_val(first_l, 'High') < get_val(last_b, 'Close') or get_val(first_l, 'Low') > get_val(last_b, 'Open')): continue
         
         # Pattern Detection
-        high = get_val(legin, 'High')
-        low = get_val(legin, 'Low')
-        close = get_val(legin, 'Close')
-        open_p = get_val(legin, 'Open')
-        
-        lr = high - low
-        lb = abs(close - open_p)
+        high, low = get_val(legin, 'High'), get_val(legin, 'Low')
+        close, open_p = get_val(legin, 'Close'), get_val(legin, 'Open')
+        lr, lb = high - low, abs(close - open_p)
         
         if lr > 0 and (lb / lr >= 0.65):
-            legout_first = legouts.iloc[0]
-            pattern_dir = 'R' if close > open_p else 'D'
-            legout_dir = 'R' if get_val(legout_first, 'Close') > get_val(legout_first, 'Open') else 'D'
+            zone_price = get_val(legouts.iloc[0], 'Close')
+            # True Freshness Logic: Check all candles after zone
+            after_zone = df.iloc[i + target_l : ]
+            is_tested = any((row['Low'] <= zone_price <= row['High']) for _, row in after_zone.iterrows())
             
+            pattern_dir = 'R' if close > open_p else 'D'
             zones.append({
                 "Date of Zone Formed": legin['Date'],
-                "Pattern": f"{pattern_dir}B{legout_dir}",
+                "Pattern": f"{pattern_dir}B{'R' if get_val(legouts.iloc[0], 'Close') > get_val(legouts.iloc[0], 'Open') else 'D'}",
                 "Type": "Supply" if pattern_dir == 'R' else "Demand",
-                "Status": "Fresh",
-                "Base Count": len(bases),
-                "Legout Count": len(legouts),
-                "Price": get_val(legout_first, 'Close')
+                "Status": "Tested" if is_tested else "Fresh",
+                "Base Count": target_b,
+                "Legout Count": target_l,
+                "Price": zone_price
             })
     return pd.DataFrame(zones)
 
 # --- EXECUTION ---
 if scan_button:
     results_list = []
-    with st.spinner("Scanning markets..."):
+    with st.spinner("Scanning..."):
         for symbol in selected_symbols:
             for tf in time_intervals:
                 df = yf.download(symbol, period=f"{scan_period + 5}d", interval=tf, progress=False)
@@ -108,7 +104,6 @@ if scan_button:
     if results_list:
         final_df = pd.concat(results_list)
         st.dataframe(final_df, use_container_width=True)
-        csv = final_df.to_csv(index=False).encode('utf-8')
-        st.download_button("📥 Download CSV", csv, "scan_results.csv", "text/csv")
+        st.download_button("📥 Download CSV", final_df.to_csv(index=False).encode('utf-8'), "scan_results.csv", "text/csv")
     else:
-        st.warning("No zones found. Try adjusting parameters.")
+        st.warning("No zones found.")
