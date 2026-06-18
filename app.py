@@ -40,7 +40,8 @@ def get_clean_data(symbol, period, interval):
 
 def scan_zones(df, target_b, target_l):
     zones = []
-    # Loop for pattern: Base + Legout
+    curr_price = float(df.iloc[-1]['Close'])
+    
     for i in range(target_b + 1, len(df) - target_l):
         base = df.iloc[i-1]
         legout = df.iloc[i]
@@ -50,18 +51,24 @@ def scan_zones(df, target_b, target_l):
         
         if base_range > 0 and (base_body / base_range < 0.4) and (lo_body / lo_range > 0.6):
             zt = "Demand" if legout['Close'] > legout['Open'] else "Supply"
-            prox, dist = (base['Close'] if zt == "Demand" else base['Open']), (base['Low'] if zt == "Demand" else base['High'])
+            prox = base['Close'] if zt == "Demand" else base['Open']
+            dist = base['Low'] if zt == "Demand" else base['High']
             risk = abs(prox - dist)
             target = (prox + (3 * risk)) if zt == "Demand" else (prox - (3 * risk))
             
-            curr_price = df.iloc[-1]['Close']
-            status = "Hit Target" if (zt=="Demand" and curr_price>=target) or (zt=="Supply" and curr_price<=target) else \
-                     "Hit SL" if (zt=="Demand" and curr_price<=dist) or (zt=="Supply" and curr_price>=dist) else "Fresh"
+            # Status Logic
+            if (zt == "Demand" and curr_price >= target) or (zt == "Supply" and curr_price <= target):
+                status = "Hit Target"
+            elif (zt == "Demand" and curr_price <= dist) or (zt == "Supply" and curr_price >= dist):
+                status = "Hit SL"
+            elif (zt == "Demand" and (dist < curr_price < prox)) or (zt == "Supply" and (prox < curr_price < dist)):
+                status = "Tested"
+            else:
+                status = "Fresh"
             
             zones.append({
                 "Date": base['Date'], "Type": zt, "Proximal": round(prox, 2), "Distal": round(dist, 2),
-                "Target": round(target, 2), "Status": status, "Base Count": target_b, 
-                "Legout Count": target_l, "Price": round(legout['Close'], 2)
+                "Target": round(target, 2), "Status": status, "Base": target_b, "Price": round(legout['Close'], 2)
             })
     return pd.DataFrame(zones)
 
@@ -88,4 +95,4 @@ if scan_button:
         st.dataframe(final_df, use_container_width=True)
         st.download_button("📥 Download CSV", final_df.to_csv(index=False).encode('utf-8'), "scan_results.csv")
     else:
-        st.warning("No zones found with current settings.")
+        st.warning("No zones found with current filters. Try changing 'Base Candles' or 'Timeframe'.")
