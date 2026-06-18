@@ -2,65 +2,56 @@ import streamlit as st
 import yfinance as yf
 import pandas as pd
 
-# --- FIX: ROBUST DATA CLEANING ---
-def clean_df(df):
-    # Agar columns MultiIndex hain (yfinance ka naya format), toh unhe flatten karein
-    if isinstance(df.columns, pd.MultiIndex):
-        df.columns = df.columns.get_level_values(0)
+# --- DATA CLEANER ---
+def get_clean_data(symbol, period, interval):
+    df = yf.download(symbol, period=period, interval=interval, progress=False)
+    if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
     df = df.reset_index()
-    # Ensure column names match what we expect
     df.columns = [c.capitalize() for c in df.columns]
-    # Agar 'Date' naam ka column nahi hai, toh pehle column ko Date banao
-    if 'Date' not in df.columns:
-        df.rename(columns={df.columns[0]: 'Date'}, inplace=True)
+    if 'Date' not in df.columns: df.rename(columns={df.columns[0]: 'Date'}, inplace=True)
     return df
 
-def calculate_zones(df, base_list, legout_list):
-    df = clean_df(df)
+# --- PATTERN LOGIC ---
+def scan_zones(df):
     zones = []
-    target_b, target_l = max(base_list), max(legout_list)
-    
-    # Simple loop bina strict validation ke
-    for i in range(target_b, len(df) - target_l):
-        legin = df.iloc[i - target_b]
-        bases = df.iloc[i - target_b + 1 : i]
-        legouts = df.iloc[i : i + target_l]
+    # 3 candle pattern: Legin(i-2), Base(i-1), Legout(i)
+    for i in range(2, len(df) - 1):
+        legin = df.iloc[i-2]
+        base = df.iloc[i-1]
+        legout = df.iloc[i]
         
-        # Candle Strength: sirf 0.4 (40%) check kar rahe hain taaki zyaada zones milein
-        high, low = float(legin['High']), float(legin['Low'])
-        close, open_p = float(legin['Close']), float(legin['Open'])
+        # 1. Base ki Strength (Body small honi chahiye)
+        base_body = abs(base['Close'] - base['Open'])
+        base_range = base['High'] - base['Low']
         
-        lr = high - low
-        lb = abs(close - open_p)
+        # 2. Legout ki Strength (Body badi honi chahiye)
+        lo_body = abs(legout['Close'] - legout['Open'])
+        lo_range = legout['High'] - legout['Low']
         
-        if lr > 0 and (lb / lr >= 0.4):
-            pattern_dir = 'R' if close > open_p else 'D'
-            zone_type = "Supply" if pattern_dir == 'R' else "Demand"
+        # Pattern: RBR/DBD/RBD/DBR
+        # Agar Base chota hai aur Legout bada hai, toh hi Zone hai
+        if base_range > 0 and (base_body / base_range < 0.4) and (lo_body / lo_range > 0.6):
             
-            # Simple Proximal/Distal
-            prox = close if zone_type == "Demand" else open_p
-            dist = low if zone_type == "Demand" else high
+            zone_type = "Demand" if legout['Close'] > legout['Open'] else "Supply"
+            prox = base['Close'] if zone_type == "Demand" else base['Open']
+            dist = base['Low'] if zone_type == "Demand" else base['High']
+            target = prox + (3*(prox-dist)) if zone_type == "Demand" else prox - (3*(dist-prox))
             
             zones.append({
-                "Date": legin['Date'],
-                "Pattern": pattern_dir,
+                "Date": base['Date'],
+                "Pattern": f"{'R' if legin['Close']>legin['Open'] else 'D'}B{'R' if legout['Close']>legout['Open'] else 'D'}",
                 "Type": zone_type,
                 "Proximal": round(prox, 2),
                 "Distal": round(dist, 2),
-                "Price": close
+                "Target": round(target, 2),
+                "Status": "Fresh"
             })
     return pd.DataFrame(zones)
 
-# --- EXECUTION ---
-symbol = st.text_input("Enter Ticker (e.g., RELIANCE.NS)", "RELIANCE.NS")
-if st.button("Run Scan"):
-    df = yf.download(symbol, period="60d", interval="15m", progress=False)
-    if not df.empty:
-        res = calculate_zones(df, [1], [1])
-        if not res.empty:
-            st.success(f"Found {len(res)} zones!")
-            st.dataframe(res)
-        else:
-            st.warning("Data mil gaya, lekin koi zone nahi mila. Pattern check karein.")
-    else:
-        st.error("Data download fail ho gaya.")
+# --- APP UI ---
+symbol = st.text_input("Stock Symbol", "RELIANCE.NS")
+if st.button("Scan Patterns"):
+    df = get_clean_data(symbol, "180d", "1h") # 1h timeframe is much more stable than 15m
+    res = scan_zones(df)
+    st.dataframe(res)
+    st.download_button("Download", res.to_csv(index=False), "zones.csv")
