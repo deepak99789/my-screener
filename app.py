@@ -31,7 +31,6 @@ col6, col7 = st.columns(2)
 with col6: zone_type = st.radio("Zone Type", ["Supply", "Demand", "All"], horizontal=True)
 with col7: dist_perc = st.slider("Distance to Entry (%)", 0.0, 10.0, 2.0, step=0.1)
 
-# Scan Button Definition
 scan_button = st.button("🚀 RUN SCAN", use_container_width=True)
 
 # --- STRATEGY ENGINE ---
@@ -40,8 +39,11 @@ def calculate_zones(df, scan_period_days, base_limit):
     if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
     if df.index.tz is not None: df.index = df.index.tz_localize(None)
     
+    # Date Filtering
     cutoff_date = pd.to_datetime(datetime.now() - timedelta(days=scan_period_days))
     df = df[df.index >= cutoff_date].reset_index()
+    # Ensure Date column name exists
+    if 'Date' not in df.columns: df.rename(columns={df.columns[0]: 'Date'}, inplace=True)
     
     for i in range(base_limit, len(df) - 1):
         legin = df.iloc[i - base_limit]
@@ -78,7 +80,6 @@ if scan_button:
     
     if results_list:
         final_df = pd.concat(results_list)
-        # Apply filters
         if "All" not in zone_status: final_df = final_df[final_df['Status'].isin(zone_status)]
         if zone_type != "All": final_df = final_df[final_df['Pattern'] == zone_type]
         
@@ -88,4 +89,4 @@ if scan_button:
         csv = final_df[cols].to_csv(index=False).encode('utf-8')
         st.download_button("📥 Download CSV", csv, "scan_results.csv", "text/csv")
     else:
-        st.warning("No zones found with current filters.")
+        st.warning("No zones found. Try adjusting parameters.")
