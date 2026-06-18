@@ -25,6 +25,11 @@ col4, col5 = st.columns(2)
 with col4: validation_check = st.multiselect("Validation Filters", ["Candle behind Legin", "White Area"])
 with col5: scan_period = st.number_input("Scan Period (Days)", 1, 365, 30)
 
+# --- RE-ADDED ZONE CONTROLS ---
+col6, col7 = st.columns(2)
+with col6: zone_status = st.multiselect("Zone Status", ["Fresh", "Tested", "All"], default=["Fresh"])
+with col7: zone_type = st.radio("Zone Type", ["Supply", "Demand", "All"], horizontal=True)
+
 selected_symbols = st.multiselect("Select Symbols", TICKER_MAP[script_type], default=TICKER_MAP[script_type])
 scan_button = st.button("🚀 RUN SCAN", use_container_width=True)
 
@@ -58,10 +63,15 @@ def calculate_zones(df, base_list, legout_list, validations):
         lb = float(abs(legin['Close'] - legin['Open']))
         
         if lr > 0 and (lb / lr >= 0.65):
-            p_name = f"{'R' if legin['Close'] > legin['Open'] else 'D'}B{'R' if legouts.iloc[0]['Close'] > legouts.iloc[0]['Open'] else 'D'}"
+            pattern_dir = 'R' if legin['Close'] > legin['Open'] else 'D'
+            legout_dir = 'R' if legouts.iloc[0]['Close'] > legouts.iloc[0]['Open'] else 'D'
+            p_name = f"{pattern_dir}B{legout_dir}"
+            
             zones.append({
                 "Date": legin['Date'],
                 "Pattern": p_name,
+                "Type": "Supply" if pattern_dir == 'R' else "Demand",
+                "Status": "Fresh",
                 "Base": len(bases),
                 "Legout": len(legouts),
                 "Price": legouts.iloc[0]['Close']
@@ -78,6 +88,9 @@ if scan_button:
                 res = calculate_zones(df, base_choice, legout_choice, validation_check)
                 if not res.empty:
                     res['Symbol'] = symbol
+                    # Apply Status & Type filters
+                    if "All" not in zone_status: res = res[res['Status'].isin(zone_status)]
+                    if zone_type != "All": res = res[res['Type'] == zone_type]
                     results_list.append(res)
     
     if results_list:
@@ -85,4 +98,4 @@ if scan_button:
         st.dataframe(final_df, use_container_width=True)
         st.download_button("📥 Download CSV", final_df.to_csv(index=False), "results.csv", "text/csv")
     else:
-        st.warning("No zones found. Try different filters.")
+        st.warning("No zones found with current filters.")
