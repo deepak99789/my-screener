@@ -3,7 +3,7 @@ import yfinance as yf
 import pandas as pd
 
 # --- CONFIGURATION ---
-st.set_page_config(page_title="Pro Supply Demand Screener", layout="wide")
+st.set_page_config(page_title="Pro Supply & Demand Screener", layout="wide")
 
 TICKER_MAP = {
     "Nifty 50": ["RELIANCE.NS", "TCS.NS", "INFY.NS", "HDFCBANK.NS", "ICICIBANK.NS"],
@@ -25,9 +25,7 @@ with col4: scan_period = st.number_input("Scan Period (Days)", 1, 730, 360)
 with col5: time_intervals = st.multiselect("Timeframe", ["15m", "1h", "4h", "1d"], default=["1h"])
 with col6: zone_type = st.radio("Zone Type", ["All", "Supply", "Demand"], horizontal=True)
 
-# Status Filter wapis add kiya
 zone_status_filter = st.multiselect("Filter by Zone Status", ["Fresh", "Tested", "Hit Target", "Hit SL"], default=["Fresh", "Tested"])
-
 selected_symbols = st.multiselect("Select Symbols", TICKER_MAP[script_type], default=TICKER_MAP[script_type])
 scan_button = st.button("🚀 RUN SCAN", use_container_width=True)
 
@@ -42,6 +40,7 @@ def get_clean_data(symbol, period, interval):
 
 def scan_zones(df, target_b, target_l):
     zones = []
+    # Loop for pattern: Base + Legout
     for i in range(target_b + 1, len(df) - target_l):
         base = df.iloc[i-1]
         legout = df.iloc[i]
@@ -61,11 +60,12 @@ def scan_zones(df, target_b, target_l):
             
             zones.append({
                 "Date": base['Date'], "Type": zt, "Proximal": round(prox, 2), "Distal": round(dist, 2),
-                "Target": round(target, 2), "Status": status, "Base": target_b, "Legout": target_l, "Price": round(legout['Close'], 2)
+                "Target": round(target, 2), "Status": status, "Base Count": target_b, 
+                "Legout Count": target_l, "Price": round(legout['Close'], 2)
             })
     return pd.DataFrame(zones)
 
-# --- EXECUTION & SUMMARY ---
+# --- EXECUTION ---
 if scan_button:
     results = []
     for sym in selected_symbols:
@@ -75,14 +75,12 @@ if scan_button:
                 res = scan_zones(df, max(base_choice), max(legout_choice))
                 if not res.empty:
                     res['Symbol'], res['Timeframe'] = sym, tf
-                    # Apply Filters
                     if zone_type != "All": res = res[res['Type'] == zone_type]
                     if zone_status_filter: res = res[res['Status'].isin(zone_status_filter)]
                     results.append(res)
     
     if results:
         final_df = pd.concat(results)
-        # Metrics update
         c1, c2, c3 = st.columns(3)
         c1.metric("Total Zones", len(final_df))
         c2.metric("Target Hit", len(final_df[final_df['Status'] == 'Hit Target']))
@@ -90,4 +88,4 @@ if scan_button:
         st.dataframe(final_df, use_container_width=True)
         st.download_button("📥 Download CSV", final_df.to_csv(index=False).encode('utf-8'), "scan_results.csv")
     else:
-        st.warning("No zones found with these filters.")
+        st.warning("No zones found with current settings.")
