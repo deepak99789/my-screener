@@ -35,11 +35,17 @@ scan_button = st.button("🚀 RUN SCAN", use_container_width=True)
 
 # --- STRATEGY ENGINE ---
 def calculate_zones(df, base_list, legout_list, validations):
-    zones = []
+    # Flatten MultiIndex if yfinance returns it
+    if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
     df = df.reset_index()
     if 'index' in df.columns: df.rename(columns={'index': 'Date'}, inplace=True)
     if 'Date' not in df.columns: df.rename(columns={df.columns[0]: 'Date'}, inplace=True)
     
+    def get_val(row, col):
+        val = row[col]
+        return float(val.iloc[0]) if isinstance(val, pd.Series) else float(val)
+
+    zones = []
     max_b = max(base_list) if base_list else 1
     max_l = max(legout_list) if legout_list else 1
     
@@ -51,18 +57,18 @@ def calculate_zones(df, base_list, legout_list, validations):
         # Validation Logic
         if "Candle behind Legin" in validations:
             prev = df.iloc[i - max_b - 1]
-            if float(legin['High']) <= float(prev['High']) and float(legin['Low']) >= float(prev['Low']): continue
+            if get_val(legin, 'High') <= get_val(prev, 'High') and get_val(legin, 'Low') >= get_val(prev, 'Low'): continue
         
         if "White Area" in validations:
             first_l = legouts.iloc[0]
             last_b = bases.iloc[-1]
-            if not (float(first_l['High']) < float(last_b['Close']) or float(first_l['Low']) > float(last_b['Open'])): continue
+            if not (get_val(first_l, 'High') < get_val(last_b, 'Close') or get_val(first_l, 'Low') > get_val(last_b, 'Open')): continue
         
-        # Pattern Detection with Safe Float Conversion
-        high = float(legin['High'])
-        low = float(legin['Low'])
-        close = float(legin['Close'])
-        open_p = float(legin['Open'])
+        # Pattern Detection
+        high = get_val(legin, 'High')
+        low = get_val(legin, 'Low')
+        close = get_val(legin, 'Close')
+        open_p = get_val(legin, 'Open')
         
         lr = high - low
         lb = abs(close - open_p)
@@ -70,24 +76,23 @@ def calculate_zones(df, base_list, legout_list, validations):
         if lr > 0 and (lb / lr >= 0.65):
             legout_first = legouts.iloc[0]
             pattern_dir = 'R' if close > open_p else 'D'
-            legout_dir = 'R' if float(legout_first['Close']) > float(legout_first['Open']) else 'D'
-            p_name = f"{pattern_dir}B{legout_dir}"
+            legout_dir = 'R' if get_val(legout_first, 'Close') > get_val(legout_first, 'Open') else 'D'
             
             zones.append({
-                "Date": legin['Date'],
-                "Pattern": p_name,
+                "Date of Zone Formed": legin['Date'],
+                "Pattern": f"{pattern_dir}B{legout_dir}",
                 "Type": "Supply" if pattern_dir == 'R' else "Demand",
                 "Status": "Fresh",
                 "Base Count": len(bases),
                 "Legout Count": len(legouts),
-                "Price": float(legout_first['Close'])
+                "Price": get_val(legout_first, 'Close')
             })
     return pd.DataFrame(zones)
 
 # --- EXECUTION ---
 if scan_button:
     results_list = []
-    with st.spinner("Scanning..."):
+    with st.spinner("Scanning markets..."):
         for symbol in selected_symbols:
             for tf in time_intervals:
                 df = yf.download(symbol, period=f"{scan_period + 5}d", interval=tf, progress=False)
