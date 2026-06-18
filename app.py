@@ -33,6 +33,13 @@ selected_symbols = st.multiselect("Select Symbols", TICKER_MAP[script_type], def
 scan_button = st.button("🚀 RUN SCAN", use_container_width=True)
 
 # --- STRATEGY ENGINE ---
+def get_proximal_distal(base_candle, zone_type):
+    is_green = base_candle['Close'] > base_candle['Open']
+    if zone_type == "Demand":
+        return (base_candle['Close'] if is_green else base_candle['Open']), base_candle['Low']
+    else: # Supply
+        return (base_candle['Open'] if is_green else base_candle['Close']), base_candle['High']
+
 def calculate_zones(df, base_list, legout_list, validations):
     if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
     df = df.reset_index()
@@ -44,8 +51,7 @@ def calculate_zones(df, base_list, legout_list, validations):
         return float(val.iloc[0]) if isinstance(val, pd.Series) else float(val)
 
     zones = []
-    target_b = max(base_list)
-    target_l = max(legout_list)
+    target_b, target_l = max(base_list), max(legout_list)
     
     for i in range(target_b, len(df) - target_l - 1):
         legin = df.iloc[i - target_b]
@@ -56,31 +62,30 @@ def calculate_zones(df, base_list, legout_list, validations):
         if "Candle behind Legin" in validations:
             prev = df.iloc[i - target_b - 1]
             if get_val(legin, 'High') <= get_val(prev, 'High') and get_val(legin, 'Low') >= get_val(prev, 'Low'): continue
-        
         if "White Area" in validations:
-            first_l = legouts.iloc[0]
-            last_b = bases.iloc[-1]
-            if not (get_val(first_l, 'High') < get_val(last_b, 'Close') or get_val(first_l, 'Low') > get_val(last_b, 'Open')): continue
+            f_l, l_b = legouts.iloc[0], bases.iloc[-1]
+            if not (get_val(f_l, 'High') < get_val(l_b, 'Close') or get_val(f_l, 'Low') > get_val(l_b, 'Open')): continue
         
-        # Pattern Detection
         high, low = get_val(legin, 'High'), get_val(legin, 'Low')
         close, open_p = get_val(legin, 'Close'), get_val(legin, 'Open')
         lr, lb = high - low, abs(close - open_p)
         
         if lr > 0 and (lb / lr >= 0.65):
+            pattern_dir = 'R' if close > open_p else 'D'
+            zone_type = "Supply" if pattern_dir == 'R' else "Demand"
+            prox, dist = get_proximal_distal(bases.iloc[-1], zone_type)
+            
             zone_price = get_val(legouts.iloc[0], 'Close')
-            # True Freshness Logic: Check all candles after zone
             after_zone = df.iloc[i + target_l : ]
             is_tested = any((row['Low'] <= zone_price <= row['High']) for _, row in after_zone.iterrows())
             
-            pattern_dir = 'R' if close > open_p else 'D'
             zones.append({
-                "Date of Zone Formed": legin['Date'],
+                "Date": legin['Date'],
                 "Pattern": f"{pattern_dir}B{'R' if get_val(legouts.iloc[0], 'Close') > get_val(legouts.iloc[0], 'Open') else 'D'}",
-                "Type": "Supply" if pattern_dir == 'R' else "Demand",
+                "Type": zone_type,
+                "Proximal": round(float(prox), 2),
+                "Distal": round(float(dist), 2),
                 "Status": "Tested" if is_tested else "Fresh",
-                "Base Count": target_b,
-                "Legout Count": target_l,
                 "Price": zone_price
             })
     return pd.DataFrame(zones)
@@ -100,7 +105,6 @@ if scan_button:
                         if "All" not in zone_status: res = res[res['Status'].isin(zone_status)]
                         if zone_type != "All": res = res[res['Type'] == zone_type]
                         results_list.append(res)
-    
     if results_list:
         final_df = pd.concat(results_list)
         st.dataframe(final_df, use_container_width=True)
