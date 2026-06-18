@@ -2,131 +2,65 @@ import streamlit as st
 import yfinance as yf
 import pandas as pd
 
-# --- CONFIGURATION ---
-st.set_page_config(page_title="Pro Supply Demand Screener", layout="wide")
-
-TICKER_MAP = {
-    "Nifty 50": ["RELIANCE.NS", "TCS.NS", "INFY.NS", "HDFCBANK.NS", "ICICIBANK.NS"],
-    "US Stock 100": ["AAPL", "MSFT", "GOOGL", "NVDA", "TSLA"],
-    "Forex": ["EURUSD=X", "GBPUSD=X", "USDJPY=X"],
-    "Crypto": ["BTC-USD", "ETH-USD", "SOL-USD"]
-}
-
-# --- UI LAYER ---
-st.title("🎯 Pro Supply & Demand Screener")
-
-col1, col2, col3 = st.columns(3)
-with col1: script_type = st.selectbox("Select Script Type", list(TICKER_MAP.keys()))
-with col2: base_choice = st.multiselect("Base Candles", [1, 2, 3], default=[1])
-with col3: legout_choice = st.multiselect("Legout Candles", [1, 2, 3], default=[1])
-
-col4, col5 = st.columns(2)
-with col4: validation_check = st.multiselect("Validation Filters", ["Candle behind Legin", "White Area"])
-with col5: scan_period = st.number_input("Scan Period (Days)", 1, 730, 360) # Default 360
-
-col6, col7, col8 = st.columns(3)
-with col6: time_intervals = st.multiselect("Timeframe", ["5m", "15m", "1h", "4h", "1d"], default=["15m"])
-with col7: zone_status = st.multiselect("Zone Status", ["Fresh", "Tested", "Hit Target", "Hit SL", "All"], default=["Fresh", "Tested"])
-with col8: zone_type = st.radio("Zone Type", ["Supply", "Demand", "All"], horizontal=True)
-
-selected_symbols = st.multiselect("Select Symbols", TICKER_MAP[script_type], default=TICKER_MAP[script_type])
-scan_button = st.button("🚀 RUN SCAN", use_container_width=True)
-
-# --- STRATEGY ENGINE ---
-def get_proximal_distal(base_candle, zone_type):
-    is_green = base_candle['Close'] > base_candle['Open']
-    if zone_type == "Demand":
-        return (base_candle['Close'] if is_green else base_candle['Open']), base_candle['Low']
-    else: # Supply
-        return (base_candle['Open'] if is_green else base_candle['Close']), base_candle['High']
-
-def calculate_zones(df, base_list, legout_list, validations):
-    if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
+# --- FIX: ROBUST DATA CLEANING ---
+def clean_df(df):
+    # Agar columns MultiIndex hain (yfinance ka naya format), toh unhe flatten karein
+    if isinstance(df.columns, pd.MultiIndex):
+        df.columns = df.columns.get_level_values(0)
     df = df.reset_index()
-    if 'index' in df.columns: df.rename(columns={'index': 'Date'}, inplace=True)
-    if 'Date' not in df.columns: df.rename(columns={df.columns[0]: 'Date'}, inplace=True)
-    
-    def get_val(row, col):
-        val = row[col]
-        return float(val.iloc[0]) if isinstance(val, pd.Series) else float(val)
+    # Ensure column names match what we expect
+    df.columns = [c.capitalize() for c in df.columns]
+    # Agar 'Date' naam ka column nahi hai, toh pehle column ko Date banao
+    if 'Date' not in df.columns:
+        df.rename(columns={df.columns[0]: 'Date'}, inplace=True)
+    return df
 
+def calculate_zones(df, base_list, legout_list):
+    df = clean_df(df)
     zones = []
     target_b, target_l = max(base_list), max(legout_list)
     
+    # Simple loop bina strict validation ke
     for i in range(target_b, len(df) - target_l):
         legin = df.iloc[i - target_b]
         bases = df.iloc[i - target_b + 1 : i]
         legouts = df.iloc[i : i + target_l]
-        if len(bases) == 0: continue
         
-        # Validations
-        if "Candle behind Legin" in validations:
-            prev = df.iloc[i - target_b - 1]
-            if get_val(legin, 'High') <= get_val(prev, 'High') and get_val(legin, 'Low') >= get_val(prev, 'Low'): continue
-        if "White Area" in validations:
-            f_l, l_b = legouts.iloc[0], bases.iloc[-1]
-            if not (get_val(f_l, 'High') < get_val(l_b, 'Close') or get_val(f_l, 'Low') > get_val(l_b, 'Open')): continue
+        # Candle Strength: sirf 0.4 (40%) check kar rahe hain taaki zyaada zones milein
+        high, low = float(legin['High']), float(legin['Low'])
+        close, open_p = float(legin['Close']), float(legin['Open'])
         
-        high, low, close, open_p = get_val(legin, 'High'), get_val(legin, 'Low'), get_val(legin, 'Close'), get_val(legin, 'Open')
-        lr, lb = high - low, abs(close - open_p)
+        lr = high - low
+        lb = abs(close - open_p)
         
-        if lr > 0 and (lb / lr >= 0.65):
+        if lr > 0 and (lb / lr >= 0.4):
             pattern_dir = 'R' if close > open_p else 'D'
             zone_type = "Supply" if pattern_dir == 'R' else "Demand"
             
-            prox, dist = get_proximal_distal(bases.iloc[-1], zone_type)
-            zone_price = get_val(legouts.iloc[0], 'Close')
-            risk = abs(prox - dist)
-            target = (prox + (3 * risk)) if zone_type == "Demand" else (prox - (3 * risk))
+            # Simple Proximal/Distal
+            prox = close if zone_type == "Demand" else open_p
+            dist = low if zone_type == "Demand" else high
             
-            after_zone = df.iloc[i + target_l : ]
-            status = "Fresh"
-            for _, row in after_zone.iterrows():
-                # Check SL
-                if (zone_type == "Demand" and row['Low'] <= dist) or (zone_type == "Supply" and row['High'] >= dist):
-                    status = "Hit SL"; break
-                # Check Target
-                if (zone_type == "Demand" and row['High'] >= target) or (zone_type == "Supply" and row['Low'] <= target):
-                    status = "Hit Target"; break
-                # Check Tested
-                if (zone_type == "Demand" and row['Low'] <= prox) or (zone_type == "Supply" and row['High'] >= prox):
-                    status = "Tested"
-
             zones.append({
                 "Date": legin['Date'],
-                "Pattern": f"{pattern_dir}B{'R' if get_val(legouts.iloc[0], 'Close') > get_val(legouts.iloc[0], 'Open') else 'D'}",
+                "Pattern": pattern_dir,
                 "Type": zone_type,
-                "Proximal": round(float(prox), 2),
-                "Distal": round(float(dist), 2),
-                "Target": round(float(target), 2),
-                "Status": status,
-                "Base Count": target_b,
-                "Legout Count": target_l,
-                "Price": zone_price
+                "Proximal": round(prox, 2),
+                "Distal": round(dist, 2),
+                "Price": close
             })
     return pd.DataFrame(zones)
 
 # --- EXECUTION ---
-if scan_button:
-    results_list = []
-    with st.spinner("Scanning markets with 360 days of data..."):
-        for symbol in selected_symbols:
-            for tf in time_intervals:
-                # 360 days + extra buffer for safety
-                df = yf.download(symbol, period=f"{scan_period + 10}d", interval=tf, progress=False)
-                if not df.empty:
-                    res = calculate_zones(df, base_choice, legout_choice, validation_check)
-                    if not res.empty:
-                        res['Symbol'] = symbol
-                        res['Timeframe'] = tf
-                        if "All" not in zone_status: res = res[res['Status'].isin(zone_status)]
-                        if zone_type != "All": res = res[res['Type'] == zone_type]
-                        results_list.append(res)
-    
-    if results_list:
-        final_df = pd.concat(results_list)
-        st.dataframe(final_df, use_container_width=True)
-        csv = final_df.to_csv(index=False).encode('utf-8')
-        st.download_button("📥 Download CSV", csv, "scan_results.csv", "text/csv")
+symbol = st.text_input("Enter Ticker (e.g., RELIANCE.NS)", "RELIANCE.NS")
+if st.button("Run Scan"):
+    df = yf.download(symbol, period="60d", interval="15m", progress=False)
+    if not df.empty:
+        res = calculate_zones(df, [1], [1])
+        if not res.empty:
+            st.success(f"Found {len(res)} zones!")
+            st.dataframe(res)
+        else:
+            st.warning("Data mil gaya, lekin koi zone nahi mila. Pattern check karein.")
     else:
-        st.warning("No zones found. Try removing 'Validation Filters' or checking higher timeframes (1h/1d).")
+        st.error("Data download fail ho gaya.")
