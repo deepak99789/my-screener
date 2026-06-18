@@ -53,10 +53,13 @@ def calculate_zones(df, base_list, legout_list, validations):
     zones = []
     target_b, target_l = max(base_list), max(legout_list)
     
-    for i in range(target_b, len(df) - target_l - 1):
+    # Loop adjustment to prevent IndexError
+    for i in range(target_b, len(df) - target_l):
         legin = df.iloc[i - target_b]
         bases = df.iloc[i - target_b + 1 : i]
         legouts = df.iloc[i : i + target_l]
+        
+        if len(bases) == 0: continue
         
         # Validations
         if "Candle behind Legin" in validations:
@@ -73,8 +76,8 @@ def calculate_zones(df, base_list, legout_list, validations):
         if lr > 0 and (lb / lr >= 0.65):
             pattern_dir = 'R' if close > open_p else 'D'
             zone_type = "Supply" if pattern_dir == 'R' else "Demand"
-            prox, dist = get_proximal_distal(bases.iloc[-1], zone_type)
             
+            prox, dist = get_proximal_distal(bases.iloc[-1], zone_type)
             zone_price = get_val(legouts.iloc[0], 'Close')
             after_zone = df.iloc[i + target_l : ]
             is_tested = any((row['Low'] <= zone_price <= row['High']) for _, row in after_zone.iterrows())
@@ -93,7 +96,7 @@ def calculate_zones(df, base_list, legout_list, validations):
 # --- EXECUTION ---
 if scan_button:
     results_list = []
-    with st.spinner("Scanning..."):
+    with st.spinner("Scanning markets..."):
         for symbol in selected_symbols:
             for tf in time_intervals:
                 df = yf.download(symbol, period=f"{scan_period + 5}d", interval=tf, progress=False)
@@ -105,9 +108,10 @@ if scan_button:
                         if "All" not in zone_status: res = res[res['Status'].isin(zone_status)]
                         if zone_type != "All": res = res[res['Type'] == zone_type]
                         results_list.append(res)
+    
     if results_list:
         final_df = pd.concat(results_list)
         st.dataframe(final_df, use_container_width=True)
         st.download_button("📥 Download CSV", final_df.to_csv(index=False).encode('utf-8'), "scan_results.csv", "text/csv")
     else:
-        st.warning("No zones found.")
+        st.warning("No zones found with current filters.")
