@@ -22,7 +22,7 @@ with col3: legout_choice = st.multiselect("Legout Candles", [1, 2, 3], default=[
 
 col4, col5 = st.columns(2)
 with col4: validation_check = st.multiselect("Validation Filters", ["Candle behind Legin", "White Area"])
-with col5: scan_period = st.number_input("Scan Period (Days)", 1, 365, 30)
+with col5: scan_period = st.number_input("Scan Period (Days)", 1, 730, 360) # Default 360
 
 col6, col7, col8 = st.columns(3)
 with col6: time_intervals = st.multiselect("Timeframe", ["5m", "15m", "1h", "4h", "1d"], default=["15m"])
@@ -82,10 +82,13 @@ def calculate_zones(df, base_list, legout_list, validations):
             after_zone = df.iloc[i + target_l : ]
             status = "Fresh"
             for _, row in after_zone.iterrows():
+                # Check SL
                 if (zone_type == "Demand" and row['Low'] <= dist) or (zone_type == "Supply" and row['High'] >= dist):
                     status = "Hit SL"; break
+                # Check Target
                 if (zone_type == "Demand" and row['High'] >= target) or (zone_type == "Supply" and row['Low'] <= target):
                     status = "Hit Target"; break
+                # Check Tested
                 if (zone_type == "Demand" and row['Low'] <= prox) or (zone_type == "Supply" and row['High'] >= prox):
                     status = "Tested"
 
@@ -106,10 +109,11 @@ def calculate_zones(df, base_list, legout_list, validations):
 # --- EXECUTION ---
 if scan_button:
     results_list = []
-    with st.spinner("Scanning markets..."):
+    with st.spinner("Scanning markets with 360 days of data..."):
         for symbol in selected_symbols:
             for tf in time_intervals:
-                df = yf.download(symbol, period=f"{scan_period + 5}d", interval=tf, progress=False)
+                # 360 days + extra buffer for safety
+                df = yf.download(symbol, period=f"{scan_period + 10}d", interval=tf, progress=False)
                 if not df.empty:
                     res = calculate_zones(df, base_choice, legout_choice, validation_check)
                     if not res.empty:
@@ -125,4 +129,4 @@ if scan_button:
         csv = final_df.to_csv(index=False).encode('utf-8')
         st.download_button("📥 Download CSV", csv, "scan_results.csv", "text/csv")
     else:
-        st.warning("No zones found.")
+        st.warning("No zones found. Try removing 'Validation Filters' or checking higher timeframes (1h/1d).")
