@@ -43,7 +43,7 @@ def get_clean_data(symbol, period, interval):
 
 def scan_zones(df, target_b, target_l):
     zones = []
-    # Pattern Logic: Legin + Base + Legout
+    # Loop to capture pattern: Legin + Base + Legout
     for i in range(target_b + 1, len(df) - target_l):
         base = df.iloc[i-1]
         legout = df.iloc[i]
@@ -53,7 +53,7 @@ def scan_zones(df, target_b, target_l):
         lo_body = abs(legout['Close'] - legout['Open'])
         lo_range = legout['High'] - legout['Low']
         
-        # Valid Pattern Check
+        # Valid Pattern Check (Base weak, Legout strong)
         if base_range > 0 and (base_body / base_range < 0.4) and (lo_body / lo_range > 0.6):
             zt = "Demand" if legout['Close'] > legout['Open'] else "Supply"
             prox = base['Close'] if zt == "Demand" else base['Open']
@@ -69,6 +69,7 @@ def scan_zones(df, target_b, target_l):
                 "Target": round(target, 2),
                 "Status": "Fresh",
                 "Base Count": target_b,
+                "Legout Count": target_l,
                 "Price": round(legout['Close'], 2)
             })
     return pd.DataFrame(zones)
@@ -83,11 +84,13 @@ if scan_button:
                 res = scan_zones(df, max(base_choice), max(legout_choice))
                 if not res.empty:
                     res['Symbol'] = sym
+                    res['Timeframe'] = tf
                     results.append(res)
     
     if results:
         final_df = pd.concat(results)
         st.dataframe(final_df, use_container_width=True)
-        st.download_button("📥 Download CSV", final_df.to_csv(index=False).encode('utf-8'), "scan.csv")
+        csv = final_df.to_csv(index=False).encode('utf-8')
+        st.download_button("📥 Download CSV", csv, "scan_results.csv", "text/csv")
     else:
         st.warning("No zones found with these settings.")
